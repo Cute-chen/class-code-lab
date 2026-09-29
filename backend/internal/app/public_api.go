@@ -46,4 +46,10 @@ func (a *App) HandleTeacherAIUsage() gin.HandlerFunc       { return a.handleTeac
 func (a *App) HandleTeacherConversations() gin.HandlerFunc { return a.handleTeacherConversations }
 func (a *App) HandleTeacherHealth() gin.HandlerFunc        { return a.handleTeacherHealth }
 func (a *App) HandleTeacherTestAI() gin.HandlerFunc        { return a.handleTeacherTestAI }
+func (a *App) HandleAIProviders() gin.HandlerFunc          { return a.handleAIProviders }
+func (a *App) HandleCreateAIProvider() gin.HandlerFunc     { return a.handleCreateAIProvider }
+func (a *App) HandleUpdateAIProvider() gin.HandlerFunc     { return a.handleUpdateAIProvider }
+func (a *App) HandleTestAIProvider() gin.HandlerFunc       { return a.handleTestAIProvider }
+func (a *App) HandleAISettings() gin.HandlerFunc           { return a.handleAISettings }
+func (a *App) HandleUpdateAISettings() gin.HandlerFunc     { return a.handleUpdateAISettings }
 func (a *App) HandleTeacherAudit() gin.HandlerFunc         { return a.handleTeacherAudit }

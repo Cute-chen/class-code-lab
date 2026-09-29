@@ -150,6 +150,8 @@ type AIUsageLog struct {
 	ClassName             string    `gorm:"->;-:migration" json:"class_name,omitempty"`
 	StudentName           string    `gorm:"->;-:migration" json:"student_name,omitempty"`
 	ConversationID        uint      `gorm:"index" json:"conversation_id"`
+	ProviderID            *uint     `gorm:"index" json:"provider_id,omitempty"`
+	ProviderName          string    `gorm:"size:120" json:"provider_name,omitempty"`
 	Model                 string    `gorm:"size:120" json:"model"`
 	Status                string    `gorm:"size:30;index" json:"status"`
 	ErrorCategory         string    `gorm:"size:80" json:"error_category,omitempty"`
@@ -163,6 +165,36 @@ type AIUsageLog struct {
 	ReasoningEffort       string    `gorm:"size:20" json:"reasoning_effort,omitempty"`
 	MaxOutputTokens       int       `json:"max_output_tokens,omitempty"`
 	CreatedAt             time.Time `gorm:"index" json:"created_at"`
+}
+
+// AISettings is a singleton. Existing classes retain their own concrete limits.
+type AISettings struct {
+	ID                      uint      `gorm:"primaryKey" json:"id"`
+	DefaultClassConcurrency int       `json:"default_class_concurrency"`
+	DefaultStudentRequests  int       `json:"default_student_requests"`
+	HistoryMessages         int       `json:"history_messages"`
+	HistoryChars            int       `json:"history_chars"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+type AIProvider struct {
+	ID                    uint       `gorm:"primaryKey" json:"id"`
+	Name                  string     `gorm:"size:120;not null" json:"name"`
+	BaseURL               string     `gorm:"size:500;not null" json:"base_url"`
+	APIKey                string     `gorm:"type:text;not null" json:"-"`
+	Model                 string     `gorm:"size:120;not null" json:"model"`
+	Enabled               bool       `json:"enabled"`
+	MaxConcurrency        int        `json:"max_concurrency"`
+	TimeoutSeconds        int        `json:"timeout_seconds"`
+	MaxOutputTokens       int        `json:"max_output_tokens"`
+	ModificationMaxTokens int        `json:"modification_max_tokens"`
+	ReasoningEffort       string     `gorm:"size:20" json:"reasoning_effort"`
+	ConfigVersion         uint       `gorm:"default:1" json:"-"`
+	AuthFailed            bool       `json:"-"`
+	CooldownUntil         *time.Time `json:"-"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type AuditLog struct {

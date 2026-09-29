@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -55,8 +56,23 @@ type AIClient struct {
 	client *http.Client
 }
 
+var sharedAITransport = &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+	ForceAttemptHTTP2:     true,
+	MaxIdleConns:          100,
+	MaxIdleConnsPerHost:   32,
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+}
+
 func NewAIClient(cfg Config) *AIClient {
-	return &AIClient{cfg: cfg, client: &http.Client{Timeout: cfg.AITimeout}}
+	timeout := cfg.AITimeout
+	if timeout <= 0 {
+		timeout = 600 * time.Second
+	}
+	return &AIClient{cfg: cfg, client: &http.Client{Transport: sharedAITransport, Timeout: timeout}}
 }
 
 func (c *AIClient) Configured() bool {
@@ -68,6 +84,15 @@ func (c *AIClient) Stream(ctx context.Context, messages []ChatMessage, onDelta f
 }
 
 func (c *AIClient) StreamWithOptions(ctx context.Context, messages []ChatMessage, options AIRequestOptions, onDelta func(string) error) (AIResult, error) {
+	return c.streamWithOptions(ctx, messages, options, onDelta, 2)
+}
+
+// The pool owns cross-provider retries, so it makes only one request to each provider.
+func (c *AIClient) StreamWithOptionsOneAttempt(ctx context.Context, messages []ChatMessage, options AIRequestOptions, onDelta func(string) error) (AIResult, error) {
+	return c.streamWithOptions(ctx, messages, options, onDelta, 1)
+}
+
+func (c *AIClient) streamWithOptions(ctx context.Context, messages []ChatMessage, options AIRequestOptions, onDelta func(string) error, maxAttempts int) (AIResult, error) {
 	if !c.Configured() {
 		return AIResult{}, &AIUpstreamError{StatusCode: http.StatusServiceUnavailable, Category: "not_configured", Message: "模型服务未配置"}
 	}
@@ -97,7 +122,7 @@ func (c *AIClient) StreamWithOptions(ctx context.Context, messages []ChatMessage
 	}
 	var lastErr error
 	var lastResult AIResult
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		result, retry, err := c.doRequest(ctx, payload, onDelta)
 		if err == nil {
 			if result.FinishReason == "length" {
@@ -107,7 +132,7 @@ func (c *AIClient) StreamWithOptions(ctx context.Context, messages []ChatMessage
 		}
 		lastResult = result
 		lastErr = err
-		if !retry || attempt == 1 {
+		if !retry || attempt == maxAttempts-1 {
 			break
 		}
 		select {
@@ -154,6 +179,9 @@ func (c *AIClient) doRequest(ctx context.Context, payload []byte, onDelta func(s
 	request.Header.Set("Accept", "text/event-stream, application/json")
 	response, err := c.client.Do(request)
 	if err != nil {
+		if ctx.Err() != nil {
+			return AIResult{}, false, ctx.Err()
+		}
 		category := "network"
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			category = "timeout"
@@ -162,7 +190,7 @@ func (c *AIClient) doRequest(ctx context.Context, payload []byte, onDelta func(s
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 16*1024))
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 16*1024))
 		category := "upstream"
 		message := "模型服务请求失败"
 		switch response.StatusCode {
@@ -173,22 +201,20 @@ func (c *AIClient) doRequest(ctx context.Context, payload []byte, onDelta func(s
 		default:
 			if response.StatusCode >= 500 {
 				category, message = "temporary", "模型服务暂时不可用，请稍后重试"
+			} else if response.StatusCode >= 400 {
+				category, message = "bad_request", "模型服务拒绝请求，请联系教师检查服务参数"
 			}
 		}
-		var upstream struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if json.Unmarshal(body, &upstream) == nil && upstream.Error.Message != "" && response.StatusCode < 500 {
-			message += "：" + upstream.Error.Message
-		}
+		// Upstream text is untrusted and may contain credentials.
 		retry := response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
 		return AIResult{}, retry, &AIUpstreamError{StatusCode: response.StatusCode, Category: category, Message: message}
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
 	if strings.Contains(contentType, "application/json") {
 		result, err := parseJSONCompletion(response.Body)
+		if err != nil && ctx.Err() == nil {
+			return result, false, &AIUpstreamError{Category: "network", Message: "模型服务响应异常，请稍后重试"}
+		}
 		if err == nil && result.Content != "" {
 			if deltaErr := onDelta(result.Content); deltaErr != nil {
 				return AIResult{}, false, deltaErr
@@ -197,6 +223,12 @@ func (c *AIClient) doRequest(ctx context.Context, payload []byte, onDelta func(s
 		return result, false, err
 	}
 	result, err := parseSSECompletion(response.Body, onDelta)
+	if err != nil && ctx.Err() == nil {
+		var upstream *AIUpstreamError
+		if !errors.As(err, &upstream) {
+			return result, false, &AIUpstreamError{Category: "network", Message: "模型服务响应异常，请稍后重试"}
+		}
+	}
 	return result, false, err
 }
 
@@ -259,7 +291,7 @@ func parseSSECompletion(reader io.Reader, onDelta func(string) error) (AIResult,
 		}
 		if chunk.Error != nil {
 			result.Content = content.String()
-			return result, &AIUpstreamError{Category: "upstream", Message: "模型服务返回错误：" + chunk.Error.Message}
+			return result, &AIUpstreamError{Category: "upstream", Message: "模型服务返回错误，请稍后重试"}
 		}
 		if chunk.Model != "" {
 			result.Model = chunk.Model

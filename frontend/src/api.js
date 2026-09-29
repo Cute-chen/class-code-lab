@@ -63,5 +63,7 @@ export async function streamAI(payload, handlers, signal) {
 
 export const runnerURL = (token) => {
   const host = window.location.hostname
-  return `${window.location.protocol}//${host}:8081/run/${encodeURIComponent(token)}`
+  const mainPort = Number(window.location.port)
+  const runnerPort = mainPort > 0 && mainPort < 65535 ? mainPort + 1 : 8081
+  return `${window.location.protocol}//${host}:${runnerPort}/run/${encodeURIComponent(token)}`
 }

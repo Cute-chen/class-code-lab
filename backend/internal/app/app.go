@@ -12,25 +12,59 @@ import (
 )
 
 type App struct {
-	Config       Config
-	DB           *gorm.DB
-	LoginLimiter *loginLimiter
-	AIClient     *AIClient
-	classLocksMu sync.Mutex
-	classLocks   map[uint]chan struct{}
-	studentAI    sync.Map
+	Config            Config
+	DB                *gorm.DB
+	LoginLimiter      *loginLimiter
+	providerMu        sync.Mutex
+	providerActive    map[uint]int
+	providerNotify    chan struct{}
+	providerCursor    uint
+	providerClientsMu sync.Mutex
+	providerClients   map[uint]providerClientEntry
+	classLocksMu      sync.Mutex
+	classLocks        map[uint]chan struct{}
+	studentAIMu       sync.Mutex
+	studentAI         map[uint]*studentAILease
 }
 
-func (a *App) acquireStudentAI(userID uint) (func(), bool) {
-	if _, loaded := a.studentAI.LoadOrStore(userID, struct{}{}); loaded {
-		return nil, false
+type providerClientEntry struct {
+	version uint
+	client  *AIClient
+}
+
+type studentAILease struct {
+	done <-chan struct{}
+}
+
+func (a *App) acquireStudentAI(userID uint, ctx context.Context) (func(), bool) {
+	a.studentAIMu.Lock()
+	if existing, ok := a.studentAI[userID]; ok {
+		select {
+		case <-existing.done:
+			delete(a.studentAI, userID)
+		default:
+			a.studentAIMu.Unlock()
+			return nil, false
+		}
 	}
-	return func() { a.studentAI.Delete(userID) }, true
+	lease := &studentAILease{done: ctx.Done()}
+	a.studentAI[userID] = lease
+	a.studentAIMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			a.studentAIMu.Lock()
+			if a.studentAI[userID] == lease {
+				delete(a.studentAI, userID)
+			}
+			a.studentAIMu.Unlock()
+		})
+	}, true
 }
 
 func (a *App) acquireClassAIWait(ctx context.Context, classID uint, limit int) (func(), bool, bool) {
 	if limit <= 0 {
-		limit = a.Config.AIMaxConcurrency
+		limit = defaultAISettings().DefaultClassConcurrency
 	}
 	a.classLocksMu.Lock()
 	sem, ok := a.classLocks[classID]
@@ -55,7 +89,10 @@ func (a *App) acquireClassAIWait(ctx context.Context, classID uint, limit int) (
 func New(cfg Config, db *gorm.DB) *App {
 	return &App{
 		Config: cfg, DB: db, LoginLimiter: newLoginLimiter(),
-		AIClient: NewAIClient(cfg), classLocks: make(map[uint]chan struct{}),
+		classLocks:     make(map[uint]chan struct{}),
+		providerActive: make(map[uint]int), providerNotify: make(chan struct{}),
+		studentAI:       make(map[uint]*studentAILease),
+		providerClients: make(map[uint]providerClientEntry),
 	}
 }
 
@@ -72,7 +109,7 @@ func (a *App) audit(actor *User, classID *uint, target, action, result, detail s
 
 func (a *App) acquireClassAI(classID uint, limit int) (func(), bool) {
 	if limit <= 0 {
-		limit = a.Config.AIMaxConcurrency
+		limit = defaultAISettings().DefaultClassConcurrency
 	}
 	a.classLocksMu.Lock()
 	sem, ok := a.classLocks[classID]

@@ -59,7 +59,7 @@ func (a *App) handleTeacherOverview(c *gin.Context) {
 		a.DB.Model(&AIUsageLog{}).Where("class_id = ? AND status = ? AND created_at >= ?", class.ID, "pending", time.Now().Add(-10*time.Minute)).Count(&aiQueue)
 		stats = append(stats, stat{ClassID: class.ID, ClassName: class.Name, StudentCount: studentCount, LoginCount: loginCount, Published: published, AIQueue: aiQueue})
 	}
-	c.JSON(http.StatusOK, gin.H{"classes": classes, "stats": stats, "ai_configured": a.AIClient.Configured(), "model": a.Config.AIModel})
+	c.JSON(http.StatusOK, gin.H{"classes": classes, "stats": stats, "ai_configured": a.AIConfigured()})
 }
 
 func (a *App) handleTeacherClasses(c *gin.Context) {
@@ -86,7 +86,8 @@ func (a *App) handleCreateClass(c *gin.Context) {
 		return
 	}
 	auth := authFrom(c)
-	class := Class{Name: request.Name, AIRequestLimit: a.Config.AIRequestsPerStudent, AIConcurrency: a.Config.AIMaxConcurrency}
+	settings := a.aiSettings()
+	class := Class{Name: request.Name, AIRequestLimit: settings.DefaultStudentRequests, AIConcurrency: settings.DefaultClassConcurrency}
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&class).Error; err != nil {
 			return err
@@ -229,9 +230,6 @@ func (a *App) handleTeacherStudents(c *gin.Context) {
 		usedByUser[count.UserID] = count.Used
 	}
 	aiRequestLimit := class.AIRequestLimit
-	if aiRequestLimit <= 0 {
-		aiRequestLimit = a.Config.AIRequestsPerStudent
-	}
 	items := make([]gin.H, 0, len(students))
 	for _, student := range students {
 		aiRemaining := aiRequestLimit + student.AIExtraRequests - int(usedByUser[student.ID])
@@ -629,7 +627,7 @@ func (a *App) handleTeacherAIUsage(c *gin.Context) {
 		cacheHitRate = float64(tokenTotals.PromptCacheHitTokens) * 100 / float64(cacheTotal)
 	}
 	c.JSON(http.StatusOK, gin.H{"summary": gin.H{
-		"total": total, "success": success, "failed": failed, "configured": a.AIClient.Configured(), "model": a.Config.AIModel,
+		"total": total, "success": success, "failed": failed, "configured": a.AIConfigured(),
 		"prompt_tokens": tokenTotals.PromptTokens, "completion_tokens": tokenTotals.CompletionTokens,
 		"prompt_cache_hit_tokens": tokenTotals.PromptCacheHitTokens, "prompt_cache_miss_tokens": tokenTotals.PromptCacheMissTokens,
 		"cache_hit_rate": cacheHitRate,
@@ -654,13 +652,9 @@ func (a *App) handleTeacherConversations(c *gin.Context) {
 }
 
 func (a *App) handleTeacherHealth(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"configured": a.AIClient.Configured(), "base_url": a.Config.AIBaseURL, "model": a.Config.AIModel,
-		"api_key_present": a.Config.AIAPIKey != "", "reasoning_effort": a.Config.AIReasoningEffort,
-		"max_output_tokens": a.Config.AIMaxOutputTokens, "modification_max_tokens": a.Config.AIModificationTokens,
-		"history_messages": a.Config.AIHistoryMessages,
-		"history_chars":    a.Config.AIHistoryChars,
-	})
+	var count int64
+	a.DB.Model(&AIProvider{}).Where("enabled = ?", true).Count(&count)
+	c.JSON(http.StatusOK, gin.H{"configured": a.AIConfigured(), "enabled_providers": count})
 }
 
 func (a *App) handleTeacherAudit(c *gin.Context) {
@@ -676,22 +670,7 @@ func (a *App) handleTeacherAudit(c *gin.Context) {
 }
 
 func (a *App) handleTeacherTestAI(c *gin.Context) {
-	if !a.AIClient.Configured() {
-		jsonError(c, http.StatusServiceUnavailable, "模型服务未配置")
-		return
-	}
-	started := time.Now()
-	_, err := a.AIClient.StreamWithOptions(
-		c.Request.Context(),
-		[]ChatMessage{{Role: "system", Content: "请只回复：连接正常"}, {Role: "user", Content: "连接测试"}},
-		AIRequestOptions{MaxOutputTokens: 16, ReasoningEffort: "none"},
-		func(string) error { return nil },
-	)
-	if err != nil {
-		jsonError(c, http.StatusBadGateway, err.Error())
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "duration_ms": time.Since(started).Milliseconds()})
+	a.handleLegacyTeacherTestAI(c)
 }
 
 func (a *App) handleTeacherStudentAI(c *gin.Context) {

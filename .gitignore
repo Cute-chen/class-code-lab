@@ -5,3 +5,17 @@ frontend/node_modules/
 frontend/dist/
 backend/class-code-lab
 coverage/
+
+# SQLite runtime files (portable build artifacts)
+*.db
+*.db-wal
+*.db-shm
+
+# Portable build outputs
+dist/
+backend/cmd/class-code-lab/frontend-dist/*
+!backend/cmd/class-code-lab/frontend-dist/.gitkeep
+
+# IDE / editor
+.vscode/
+.trae/

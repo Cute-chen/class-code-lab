@@ -29,8 +29,7 @@ func TestBuildAIMessagesSeparatesCurrentCodeAndCompactsHistoricalHTML(t *testing
 
 func TestBuildAIMessagesUsesNewestHistoryWithinCharacterBudget(t *testing.T) {
 	a := newTestApp(t)
-	a.Config.AIHistoryMessages = 8
-	a.Config.AIHistoryChars = 8
+	a.DB.Create(&AISettings{ID: 1, DefaultClassConcurrency: 6, DefaultStudentRequests: 12, HistoryMessages: 8, HistoryChars: 8})
 	conversation := AIConversation{UserID: 1, ClassID: 1, Title: "budget"}
 	a.DB.Create(&conversation)
 	for _, content := range []string{"1111", "2222", "3333", "4444"} {
@@ -43,29 +42,47 @@ func TestBuildAIMessagesUsesNewestHistoryWithinCharacterBudget(t *testing.T) {
 	}
 }
 
-func TestStudentAIRequestOptionsSelectsModeAndBudget(t *testing.T) {
-	a := newTestApp(t)
-	a.Config.AIMaxOutputTokens = 393216
-	a.Config.AIModificationTokens = 393216
-	a.Config.AIReasoningEffort = "low"
+func TestStudentAIRequestOptionsAutoSelectsReasoningEffort(t *testing.T) {
+	provider := AIProvider{MaxOutputTokens: 393216, ModificationMaxTokens: 393216, ReasoningEffort: "auto"}
 
-	options, mode := a.studentAIRequestOptions("", "做一个游戏", true, false)
+	options, mode := aiRequestOptionsForProvider(provider, "", "做一个小游戏", true, false)
+	if mode != aiRequestModeGenerate || options.ReasoningEffort != "low" {
+		t.Fatalf("expected low for a new generation, mode=%q options=%#v", mode, options)
+	}
+	options, mode = aiRequestOptionsForProvider(provider, "<html></html>", "把背景改成蓝色", false, false)
+	if mode != aiRequestModeModifyPatch || options.ReasoningEffort != "none" {
+		t.Fatalf("expected none for a simple visual patch, mode=%q options=%#v", mode, options)
+	}
+	options, mode = aiRequestOptionsForProvider(provider, "<html></html>", "修复碰撞逻辑错误", false, false)
+	if mode != aiRequestModeModifyComplex || options.ReasoningEffort != "high" {
+		t.Fatalf("expected high for a complex fix, mode=%q options=%#v", mode, options)
+	}
+	options, mode = aiRequestOptionsForProvider(provider, "<html></html>", "把背景改成蓝色", false, true)
+	if mode != aiRequestModeRetryFull || options.ReasoningEffort != "high" {
+		t.Fatalf("expected high for a full retry, mode=%q options=%#v", mode, options)
+	}
+}
+
+func TestStudentAIRequestOptionsSelectsModeAndBudget(t *testing.T) {
+	provider := AIProvider{MaxOutputTokens: 393216, ModificationMaxTokens: 393216, ReasoningEffort: "low"}
+
+	options, mode := aiRequestOptionsForProvider(provider, "", "做一个游戏", true, false)
 	if mode != aiRequestModeGenerate || options.MaxOutputTokens != 393216 || options.ReasoningEffort != "low" {
 		t.Fatalf("unexpected generation options: mode=%q options=%#v", mode, options)
 	}
-	options, mode = a.studentAIRequestOptions("<html></html>", "换一个新作品", true, false)
+	options, mode = aiRequestOptionsForProvider(provider, "<html></html>", "换一个新作品", true, false)
 	if mode != aiRequestModeConversation || options.MaxOutputTokens != 393216 || options.ReasoningEffort != "low" {
 		t.Fatalf("unexpected new conversation options: mode=%q options=%#v", mode, options)
 	}
-	options, mode = a.studentAIRequestOptions("<html></html>", "把背景改成蓝色", false, false)
+	options, mode = aiRequestOptionsForProvider(provider, "<html></html>", "把背景改成蓝色", false, false)
 	if mode != aiRequestModeModifyPatch || options.MaxOutputTokens != 393216 || options.ReasoningEffort != "low" {
 		t.Fatalf("unexpected patch options: mode=%q options=%#v", mode, options)
 	}
-	options, mode = a.studentAIRequestOptions("<html></html>", "修复碰撞逻辑错误", false, false)
+	options, mode = aiRequestOptionsForProvider(provider, "<html></html>", "修复碰撞逻辑错误", false, false)
 	if mode != aiRequestModeModifyComplex || options.MaxOutputTokens != 393216 || options.ReasoningEffort != "low" {
 		t.Fatalf("unexpected complex options: mode=%q options=%#v", mode, options)
 	}
-	options, mode = a.studentAIRequestOptions("<html></html>", "把背景改成蓝色", false, true)
+	options, mode = aiRequestOptionsForProvider(provider, "<html></html>", "把背景改成蓝色", false, true)
 	if mode != aiRequestModeRetryFull || options.MaxOutputTokens != 393216 || options.ReasoningEffort != "low" {
 		t.Fatalf("unexpected full retry options: mode=%q options=%#v", mode, options)
 	}
@@ -106,5 +123,27 @@ func TestBuildAIMessagesSkipsInvalidPatchAssistant(t *testing.T) {
 		if strings.Contains(message.Content, "invalid-patch-content") {
 			t.Fatalf("invalid patch assistant should not be sent back to the model: %#v", messages)
 		}
+	}
+}
+
+func TestBuildAIMessagesForRequestUsesAdaptiveHistoryBudget(t *testing.T) {
+	a := newTestApp(t)
+	a.DB.Create(&AISettings{ID: 1, DefaultClassConcurrency: 6, DefaultStudentRequests: 12, HistoryMessages: 8, HistoryChars: 16000})
+	conversation := AIConversation{UserID: 1, ClassID: 1, Title: "adaptive"}
+	a.DB.Create(&conversation)
+	for _, content := range []string{"需求一", "回答一", "需求二", "回答二", "需求三", "回答三", "需求四", "回答四", "最新需求"} {
+		role := "user"
+		if strings.HasPrefix(content, "回答") {
+			role = "assistant"
+		}
+		a.DB.Create(&AIMessage{ConversationID: conversation.ID, Role: role, Content: content, Status: "success"})
+	}
+	simple := a.buildAIMessagesForRequest(conversation.ID, "<html><body>current</body></html>", "把背景改成蓝色", false, false)
+	complex := a.buildAIMessagesForRequest(conversation.ID, "<html><body>current</body></html>", "修复碰撞逻辑错误", false, false)
+	if len(simple) >= len(complex) {
+		t.Fatalf("simple request should carry less history: simple=%d complex=%d", len(simple), len(complex))
+	}
+	if !strings.Contains(simple[1].Content, "current") || !strings.Contains(complex[1].Content, "current") {
+		t.Fatal("adaptive history must preserve the current code")
 	}
 }

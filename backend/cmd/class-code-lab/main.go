@@ -1,7 +1,9 @@
 package main
 
 import (
+	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,7 +46,7 @@ func buildRouter(service *app.App) *gin.Engine {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "database": false})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "database": true, "ai_configured": service.AIClient.Configured()})
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "database": true, "ai_configured": service.AIConfigured()})
 	})
 	public := router.Group("/api/public")
 	public.GET("/classes", service.HandlePublicClasses())
@@ -96,6 +98,12 @@ func buildRouter(service *app.App) *gin.Engine {
 	teacher.GET("/ai/conversations", service.HandleTeacherConversations())
 	teacher.GET("/ai/health", service.HandleTeacherHealth())
 	teacher.POST("/ai/test", service.HandleTeacherTestAI())
+	teacher.GET("/ai/providers", service.HandleAIProviders())
+	teacher.POST("/ai/providers", service.HandleCreateAIProvider())
+	teacher.PATCH("/ai/providers/:id", service.HandleUpdateAIProvider())
+	teacher.POST("/ai/providers/:id/test", service.HandleTestAIProvider())
+	teacher.GET("/ai/settings", service.HandleAISettings())
+	teacher.PATCH("/ai/settings", service.HandleUpdateAISettings())
 	teacher.GET("/audit-logs", service.HandleTeacherAudit())
 
 	serveFrontend(router, service.Config.FrontendDist)
@@ -103,9 +111,17 @@ func buildRouter(service *app.App) *gin.Engine {
 }
 
 func serveFrontend(router *gin.Engine, dist string) {
-	if strings.TrimSpace(dist) == "" {
+	if strings.TrimSpace(dist) != "" {
+		serveFrontendFromDisk(router, dist)
 		return
 	}
+	serveFrontendFromEmbed(router)
+}
+
+// serveFrontendFromDisk serves the SPA from a filesystem directory. Used in
+// development (FRONTEND_DIST points at frontend/dist) so edits to the build
+// output are picked up without rebuilding the Go binary.
+func serveFrontendFromDisk(router *gin.Engine, dist string) {
 	router.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "接口不存在"})
@@ -126,4 +142,42 @@ func serveFrontend(router *gin.Engine, dist string) {
 		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "前端尚未构建，请先执行 npm run build"})
 	})
+}
+
+// serveFrontendFromEmbed serves the SPA from the //go:embed frontend-dist
+// bundle baked into the binary. Used when FRONTEND_DIST is empty (portable
+// exe). SPA routes fall back to index.html so client-side routing works.
+func serveFrontendFromEmbed(router *gin.Engine) {
+	subFS, err := fs.Sub(frontendFS, "frontend-dist")
+	if err != nil {
+		router.NoRoute(func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "前端未内嵌"})
+		})
+		return
+	}
+	router.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "接口不存在"})
+			return
+		}
+		clean := strings.Trim(strings.TrimPrefix(c.Request.URL.Path, "/"), "/")
+		if clean != "" {
+			if data, rerr := fs.ReadFile(subFS, clean); rerr == nil {
+				c.Data(http.StatusOK, contentTypeFor(clean), data)
+				return
+			}
+		}
+		if data, rerr := fs.ReadFile(subFS, "index.html"); rerr == nil {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "前端未内嵌，请用 build-portable.sh 构建"})
+	})
+}
+
+func contentTypeFor(name string) string {
+	if t := mime.TypeByExtension(filepath.Ext(name)); t != "" {
+		return t
+	}
+	return "application/octet-stream"
 }

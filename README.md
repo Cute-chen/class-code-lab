@@ -6,7 +6,7 @@
 
 - 前端：React、Vite、CodeMirror 6、Phosphor Icons
 - 后端：Go、Gin、GORM
-- 数据库：MySQL 8
+- 数据库：SQLite（默认便携部署）或 MySQL 8
 - 模型接口：OpenAI Chat Completions 兼容协议，支持 SSE 和普通 JSON 响应
 - 主平台：默认 `8080`
 - Runner：默认 `8081`
@@ -16,9 +16,9 @@ Runner 与主平台使用不同 Origin。学生代码只在 `sandbox="allow-scri
 
 ## 本地启动
 
-要求：Go 1.26+、Node.js 20+、MySQL 8+。
+要求：Go 1.26+、Node.js 20+。使用 MySQL 时还需 MySQL 8+。
 
-1. 确认 MySQL 已启动。默认开发连接为 `root:1234@127.0.0.1`，服务首次启动时会自动创建 `class_code_lab` 数据库。
+1. 默认使用当前目录的 SQLite 数据库文件 `class-code-lab.db`。如需 MySQL，在 `backend/.env` 中设置 `DATABASE_DSN`；服务首次启动时会自动创建目标数据库。
 
 2. 构建前端：
 
@@ -54,29 +54,15 @@ APP_ADDRESS=:18080 go run ./cmd/class-code-lab
 - 初始密码：`123456`
 - 首次登录后必须立即改密
 
-## 模型配置
+## 模型配置与多服务分流
 
-最低需要设置：
+教师登录后进入“AI 对话与用量 → 服务配置与全局设置”，填写服务名称、OpenAI Chat Completions 兼容接口地址（含 `/v1`）、API Key 和模型，保存后可单独测试连接。可以新增多组服务，设置各自的最大并发、超时、输出上限与思考强度，也可以随时编辑或停用。所有教师共用同一个服务池并可管理配置。API Key 不在读取接口中返回，但会直接保存在数据库中，备份数据库时应按包含密钥的数据保管。
 
-```env
-AI_BASE_URL=https://api.openai.com/v1
-AI_API_KEY=服务端密钥
-AI_MODEL=模型名称
-AI_TIMEOUT_SECONDS=600
-AI_MAX_OUTPUT_TOKENS=393216
-AI_MODIFICATION_MAX_TOKENS=393216
-AI_REASONING_EFFORT=low
-AI_HISTORY_MESSAGES=8
-AI_HISTORY_CHARS=16000
-```
+后端选择空闲容量最高的服务；同等负载时轮换。服务满载时学生进入等待队列。请求尚未输出内容就遇到限流、网络、服务端或鉴权错误时，会尝试其他服务。临时故障使该服务冷却 60 秒；鉴权失败后需更新配置或连接测试成功才能恢复。服务进程内统计并发，当前不支持多后端实例共享调度状态。
 
-平台会请求 `{AI_BASE_URL}/chat/completions`，使用 Bearer 鉴权、`stream: true` 和 `stream_options.include_usage: true`。兼容供应商忽略流式参数并返回普通 JSON 的情况。
+平台请求 `{接口地址}/chat/completions`，使用 Bearer 鉴权、`stream: true` 和 `stream_options.include_usage: true`，同时兼容普通 JSON 响应。DeepSeek 接口沿用 `max_tokens` 和 `reasoning_effort` 参数。思考强度支持 `none`、`low`、`high`、`max` 和“自动”；自动模式会让新作品使用 `low`，简单样式修改使用 `none`，复杂修复和全量重试使用 `high`。历史对话受全局条数和字符预算限制，历史 AI 回复里的完整 HTML 不会重复发送给模型。
 
-使用 DeepSeek 时，平台会发送 `max_tokens` 和 `reasoning_effort`。所有学生作品生成、增量修改、复杂调试和全量重试均使用 `low` 思考强度；输出上限设为 DeepSeek Chat Completions 当前允许的最大值 393216 Token，请求超时为 600 秒。这是最大上限而非强制生成长度，模型正常完成时仍会提前停止。
-
-历史对话会受条数和字符预算双重限制，历史 AI 回复里的完整 HTML 代码块不会重复发送给模型。
-
-未设置 `AI_API_KEY` 或 `AI_MODEL` 时，系统仍可正常启动。学生可以手动粘贴、编辑、预览和发布作品，AI 页面会明确显示“模型服务未配置”。
+升级已有安装时，数据库第一次初始化会将旧 `AI_*` 环境变量导入一组服务及全局默认设置；之后数据库配置优先且不会被环境变量覆盖。确认导入后可从 `.env` 删除旧 AI 配置。新安装请直接在教师后台填写；未配置服务时仍可手动编辑、预览和发布作品。
 
 ## 课堂使用顺序
 

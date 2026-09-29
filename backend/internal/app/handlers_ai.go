@@ -23,6 +23,15 @@ var complexAIRequestKeywords = []string{
 	"报错", "错误", "修复", "调试", "卡顿", "性能", "逻辑", "算法", "碰撞", "关卡", "bug", "debug",
 }
 
+// simpleAIRequestKeywords identifies changes that usually only need a quick
+// patch. Auto mode keeps these requests fast while reserving deeper reasoning
+// for requests that can change behavior or require debugging.
+var simpleAIRequestKeywords = []string{
+	"颜色", "色彩", "背景", "字体", "字号", "文字", "文本", "标题", "文案", "样式", "外观",
+	"间距", "边距", "圆角", "阴影", "透明度", "大小", "宽度", "高度", "布局", "对齐", "居中",
+	"换成", "改成", "改为", "替换", "美化", "好看", "配色",
+}
+
 func (a *App) handleAIHistory(c *gin.Context) {
 	auth := authFrom(c)
 	var conversations []AIConversation
@@ -45,7 +54,7 @@ func (a *App) handleAIHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"conversations": conversations, "proposals": proposals,
 		"remaining":  a.studentAIRemaining(auth.User, *auth.User.ClassID),
-		"configured": a.AIClient.Configured(),
+		"configured": a.AIConfigured(),
 	})
 }
 
@@ -79,7 +88,7 @@ func (a *App) handleAIMessage(c *gin.Context) {
 		jsonError(c, http.StatusForbidden, "你的 AI 助手当前已暂停，请联系教师")
 		return
 	}
-	if !a.AIClient.Configured() {
+	if !a.AIConfigured() {
 		jsonError(c, http.StatusServiceUnavailable, "模型服务未配置，你仍可手动编辑和发布作品")
 		return
 	}
@@ -94,7 +103,7 @@ func (a *App) handleAIMessage(c *gin.Context) {
 			return
 		}
 	}
-	releaseStudent, ok := a.acquireStudentAI(auth.User.ID)
+	releaseStudent, ok := a.acquireStudentAI(auth.User.ID, c.Request.Context())
 	if !ok {
 		jsonError(c, http.StatusConflict, "你已有一个 AI 请求正在进行")
 		return
@@ -120,46 +129,95 @@ func (a *App) handleAIMessage(c *gin.Context) {
 	}
 	defer releaseClass()
 
+	writeSSE(c, "status", gin.H{"message": "正在准备模型请求"})
+	flusher.Flush()
 	conversation, requestMessage, err := a.prepareAIConversation(auth.User, request.ConversationID, request.RetryMessageID, request.Message)
 	if err != nil {
 		writeSSE(c, "error", gin.H{"message": err.Error()})
 		return
 	}
 	work, _ := a.getOrCreateWork(auth.User)
-	messages := a.buildAIMessages(conversation.ID, work.DraftCode)
 	forceFull := request.ForceFull || isRetry
-	requestOptions, requestMode := a.studentAIRequestOptions(work.DraftCode, requestMessage, request.ConversationID == 0, forceFull)
+	messages := a.buildAIMessagesForRequest(conversation.ID, work.DraftCode, requestMessage, request.ConversationID == 0, forceFull)
 	if forceFull {
 		messages = append(messages, ChatMessage{Role: "system", Content: "本次是增量修改失败后的完整代码重试。禁止返回 patch JSON；必须根据用户最近一条需求返回完整、可直接运行的单文件 HTML，放在 html 代码块中。"})
 	}
-	start := time.Now()
-	usage := AIUsageLog{
-		UserID: auth.User.ID, ClassID: class.ID, ConversationID: conversation.ID, Model: a.Config.AIModel, Status: "pending",
-		RequestMode: requestMode, ReasoningEffort: requestOptions.ReasoningEffort, MaxOutputTokens: requestOptions.MaxOutputTokens,
-	}
-	a.DB.Create(&usage)
-
-	result, streamErr := a.AIClient.StreamWithOptions(c.Request.Context(), messages, requestOptions, func(delta string) error {
-		writeSSE(c, "delta", gin.H{"delta": delta})
+	var result AIResult
+	var usage AIUsageLog
+	var requestOptions AIRequestOptions
+	var requestMode string
+	var duration int64
+	excluded := map[uint]bool{}
+	lastFailureMessage := ""
+	for {
+		provider, release, acquireErr := a.acquireProvider(c.Request.Context(), excluded, func() {
+			writeSSE(c, "queue", gin.H{"position": 1, "message": "模型服务繁忙，已进入等待队列"})
+			flusher.Flush()
+		})
+		if acquireErr != nil {
+			if c.Request.Context().Err() == nil {
+				message := acquireErr.Error()
+				if lastFailureMessage != "" {
+					message = lastFailureMessage
+				}
+				writeSSE(c, "error", gin.H{"message": message})
+				flusher.Flush()
+			}
+			return
+		}
+		excluded[provider.ID] = true
+		writeSSE(c, "status", gin.H{"message": "正在连接 AI 服务"})
 		flusher.Flush()
-		return nil
-	})
-	duration := time.Since(start).Milliseconds()
-	if streamErr != nil {
+		requestOptions, requestMode = aiRequestOptionsForProvider(provider, work.DraftCode, requestMessage, request.ConversationID == 0, forceFull)
+		usage = AIUsageLog{UserID: auth.User.ID, ClassID: class.ID, ConversationID: conversation.ID,
+			ProviderID: &provider.ID, ProviderName: provider.Name, Model: provider.Model, Status: "pending",
+			RequestMode: requestMode, ReasoningEffort: requestOptions.ReasoningEffort, MaxOutputTokens: requestOptions.MaxOutputTokens}
+		if err := a.DB.Create(&usage).Error; err != nil {
+			release()
+			writeSSE(c, "error", gin.H{"message": "用量记录保存失败"})
+			return
+		}
+		start := time.Now()
+		emitted := false
+		var streamErr error
+		writeSSE(c, "status", gin.H{"message": "已连接模型，等待首个回答"})
+		flusher.Flush()
+		result, streamErr = a.aiClientForProvider(provider).StreamWithOptionsOneAttempt(c.Request.Context(), messages, requestOptions, func(delta string) error {
+			emitted = true
+			writeSSE(c, "delta", gin.H{"delta": delta})
+			flusher.Flush()
+			return nil
+		})
+		duration = time.Since(start).Milliseconds()
+		release()
+		if streamErr == nil {
+			if result.Model == "" {
+				result.Model = provider.Model
+			}
+			break
+		}
 		category := "upstream"
 		message := "模型回答失败，请稍后重试"
 		if upstream, ok := streamErr.(*AIUpstreamError); ok {
 			category, message = upstream.Category, upstream.Message
 		}
-		a.DB.Model(&usage).Updates(map[string]any{
-			"status": "failed", "error_category": category, "duration_ms": duration, "model": result.Model,
-			"prompt_tokens": result.PromptTokens, "completion_tokens": result.CompletionTokens,
-			"prompt_cache_hit_tokens": result.PromptCacheHitTokens, "prompt_cache_miss_tokens": result.PromptCacheMissTokens,
-			"finish_reason": result.FinishReason,
-		})
-		writeSSE(c, "error", gin.H{"message": message})
-		flusher.Flush()
-		return
+		lastFailureMessage = message
+		failedModel := result.Model
+		if failedModel == "" {
+			failedModel = provider.Model
+		}
+		a.DB.Model(&usage).Updates(map[string]any{"status": "failed", "error_category": category,
+			"duration_ms": duration, "model": failedModel, "prompt_tokens": result.PromptTokens,
+			"completion_tokens": result.CompletionTokens, "prompt_cache_hit_tokens": result.PromptCacheHitTokens,
+			"prompt_cache_miss_tokens": result.PromptCacheMissTokens, "finish_reason": result.FinishReason})
+		a.markProviderFailure(provider, streamErr)
+		if emitted || c.Request.Context().Err() != nil || !retryOnOtherProvider(streamErr) {
+			if c.Request.Context().Err() == nil {
+				writeSSE(c, "error", gin.H{"message": message})
+				flusher.Flush()
+			}
+			return
+		}
 	}
 
 	assistant := AIMessage{
@@ -207,22 +265,21 @@ func (a *App) handleAIMessage(c *gin.Context) {
 	flusher.Flush()
 }
 
-func (a *App) studentAIRequestOptions(currentCode, message string, isNewConversation, forceFull bool) (AIRequestOptions, string) {
-	fullOutputLimit := a.Config.AIMaxOutputTokens
+func aiRequestOptionsForProvider(provider AIProvider, currentCode, message string, isNewConversation, forceFull bool) (AIRequestOptions, string) {
+	fullOutputLimit := provider.MaxOutputTokens
 	if fullOutputLimit <= 0 {
 		fullOutputLimit = 393216
 	}
-	reasoningEffort := normalizeReasoningEffort(a.Config.AIReasoningEffort)
 	if strings.TrimSpace(currentCode) == "" {
-		return AIRequestOptions{MaxOutputTokens: fullOutputLimit, ReasoningEffort: reasoningEffort}, aiRequestModeGenerate
+		return AIRequestOptions{MaxOutputTokens: fullOutputLimit, ReasoningEffort: reasoningEffortForRequest(provider, currentCode, message, isNewConversation, forceFull)}, aiRequestModeGenerate
 	}
 	if forceFull {
-		return AIRequestOptions{MaxOutputTokens: fullOutputLimit, ReasoningEffort: reasoningEffort}, aiRequestModeRetryFull
+		return AIRequestOptions{MaxOutputTokens: fullOutputLimit, ReasoningEffort: reasoningEffortForRequest(provider, currentCode, message, isNewConversation, forceFull)}, aiRequestModeRetryFull
 	}
 	if isNewConversation {
-		return AIRequestOptions{MaxOutputTokens: fullOutputLimit, ReasoningEffort: reasoningEffort}, aiRequestModeConversation
+		return AIRequestOptions{MaxOutputTokens: fullOutputLimit, ReasoningEffort: reasoningEffortForRequest(provider, currentCode, message, isNewConversation, forceFull)}, aiRequestModeConversation
 	}
-	modificationLimit := a.Config.AIModificationTokens
+	modificationLimit := provider.ModificationMaxTokens
 	if modificationLimit <= 0 {
 		modificationLimit = 393216
 	}
@@ -232,10 +289,41 @@ func (a *App) studentAIRequestOptions(currentCode, message string, isNewConversa
 	lowerMessage := strings.ToLower(message)
 	for _, keyword := range complexAIRequestKeywords {
 		if strings.Contains(lowerMessage, keyword) {
-			return AIRequestOptions{MaxOutputTokens: fullOutputLimit, ReasoningEffort: reasoningEffort}, aiRequestModeModifyComplex
+			return AIRequestOptions{MaxOutputTokens: fullOutputLimit, ReasoningEffort: reasoningEffortForRequest(provider, currentCode, message, isNewConversation, forceFull)}, aiRequestModeModifyComplex
 		}
 	}
-	return AIRequestOptions{MaxOutputTokens: modificationLimit, ReasoningEffort: reasoningEffort}, aiRequestModeModifyPatch
+	return AIRequestOptions{MaxOutputTokens: modificationLimit, ReasoningEffort: reasoningEffortForRequest(provider, currentCode, message, isNewConversation, forceFull)}, aiRequestModeModifyPatch
+}
+
+// reasoningEffortForRequest resolves the provider's stored policy into the
+// concrete value sent to the upstream API. Fixed modes remain unchanged;
+// auto mode uses the request shape to balance latency and answer quality.
+func reasoningEffortForRequest(provider AIProvider, currentCode, message string, isNewConversation, forceFull bool) string {
+	configured := strings.ToLower(strings.TrimSpace(provider.ReasoningEffort))
+	if configured != "auto" {
+		return normalizeReasoningEffort(configured)
+	}
+
+	if forceFull || containsAIKeyword(message, complexAIRequestKeywords) {
+		return "high"
+	}
+	if strings.TrimSpace(currentCode) == "" || isNewConversation {
+		return "low"
+	}
+	if containsAIKeyword(message, simpleAIRequestKeywords) {
+		return "none"
+	}
+	return "low"
+}
+
+func containsAIKeyword(message string, keywords []string) bool {
+	lowerMessage := strings.ToLower(message)
+	for _, keyword := range keywords {
+		if strings.Contains(lowerMessage, strings.ToLower(keyword)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) prepareAIConversation(user User, conversationID, retryMessageID uint, message string) (AIConversation, string, error) {
@@ -291,11 +379,59 @@ func (a *App) prepareConversation(user User, conversationID uint, message string
 }
 
 func (a *App) buildAIMessages(conversationID uint, currentCode string) []ChatMessage {
-	messageLimit := a.Config.AIHistoryMessages
+	settings := a.aiSettings()
+	return a.buildAIMessagesWithLimits(conversationID, currentCode, settings.HistoryMessages, settings.HistoryChars)
+}
+
+// buildAIMessagesForRequest keeps the complete current work available while
+// adapting historical context to the request type. Simple edits need very
+// little history; debugging benefits from a wider recent window.
+func (a *App) buildAIMessagesForRequest(conversationID uint, currentCode, request string, isNewConversation, forceFull bool) []ChatMessage {
+	settings := a.aiSettings()
+	messageLimit, charLimit := settings.HistoryMessages, settings.HistoryChars
 	if messageLimit <= 0 {
 		messageLimit = 8
 	}
-	charLimit := a.Config.AIHistoryChars
+	if charLimit <= 0 {
+		charLimit = 16000
+	}
+	switch {
+	case strings.TrimSpace(currentCode) == "" || isNewConversation:
+		messageLimit, charLimit = minPositive(messageLimit, 2), minPositive(charLimit, 4000)
+	case forceFull:
+		messageLimit, charLimit = minPositive(messageLimit, 4), minPositive(charLimit, 8000)
+	default:
+		complex := false
+		lower := strings.ToLower(request)
+		for _, keyword := range complexAIRequestKeywords {
+			if strings.Contains(lower, keyword) {
+				complex = true
+				break
+			}
+		}
+		if complex {
+			messageLimit, charLimit = minPositive(messageLimit, 8), minPositive(charLimit, 12000)
+		} else {
+			messageLimit, charLimit = minPositive(messageLimit, 4), minPositive(charLimit, 8000)
+		}
+	}
+	return a.buildAIMessagesWithLimits(conversationID, currentCode, messageLimit, charLimit)
+}
+
+func minPositive(value, maximum int) int {
+	if value <= 0 {
+		return maximum
+	}
+	if value < maximum {
+		return value
+	}
+	return maximum
+}
+
+func (a *App) buildAIMessagesWithLimits(conversationID uint, currentCode string, messageLimit, charLimit int) []ChatMessage {
+	if messageLimit <= 0 {
+		messageLimit = 8
+	}
 	if charLimit <= 0 {
 		charLimit = 16000
 	}

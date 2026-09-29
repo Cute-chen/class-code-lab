@@ -37,10 +37,10 @@ type Config struct {
 func LoadConfig() Config {
 	loadDotEnv()
 	return Config{
-		DatabaseDSN:          env("DATABASE_DSN", "root:1234@tcp(127.0.0.1:3306)/class_code_lab?charset=utf8mb4&parseTime=True&loc=Local"),
+		DatabaseDSN:          env("DATABASE_DSN", "sqlite://./class-code-lab.db"),
 		AppAddress:           env("APP_ADDRESS", ":8080"),
 		RunnerAddress:        env("RUNNER_ADDRESS", ":8081"),
-		FrontendDist:         env("FRONTEND_DIST", filepath.Join("..", "frontend", "dist")),
+		FrontendDist:         env("FRONTEND_DIST", ""),
 		CookieSecure:         envBool("COOKIE_SECURE", false),
 		SessionTTL:           time.Duration(envInt("SESSION_HOURS", 10)) * time.Hour,
 		RunTokenTTL:          time.Duration(envInt("RUN_TOKEN_MINUTES", 5)) * time.Minute,
@@ -55,7 +55,7 @@ func LoadConfig() Config {
 		AIRequestsPerStudent: envInt("AI_REQUESTS_PER_STUDENT", 12),
 		AIMaxOutputTokens:    envInt("AI_MAX_OUTPUT_TOKENS", 393216),
 		AIModificationTokens: envInt("AI_MODIFICATION_MAX_TOKENS", 393216),
-		AIReasoningEffort:    envChoice("AI_REASONING_EFFORT", "low", "none", "low", "high", "max"),
+		AIReasoningEffort:    envChoice("AI_REASONING_EFFORT", "low", "none", "low", "high", "max", "auto"),
 		AIHistoryMessages:    envInt("AI_HISTORY_MESSAGES", 8),
 		AIHistoryChars:       envInt("AI_HISTORY_CHARS", 16000),
 	}
@@ -69,6 +69,11 @@ func loadDotEnv() {
 		".env",
 		filepath.Join("backend", ".env"),
 		filepath.Join("..", ".env"),
+	}
+	// Portable exe: also look beside the binary so teachers can drop a .env
+	// next to class-code-lab.exe to override defaults.
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), ".env"))
 	}
 	seen := make(map[string]struct{}, len(candidates))
 	for _, path := range candidates {

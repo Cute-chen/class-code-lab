@@ -251,6 +251,15 @@ export default function StudioPage() {
   const thumbnailCaptureRef = useRef(null)
   const thumbnailCaptureTimerRef = useRef(null)
 
+  useEffect(() => {
+    const cancelAIRequest = () => abortRef.current?.abort()
+    window.addEventListener('pagehide', cancelAIRequest)
+    return () => {
+      window.removeEventListener('pagehide', cancelAIRequest)
+      cancelAIRequest()
+    }
+  }, [])
+
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
@@ -476,7 +485,8 @@ export default function StudioPage() {
     try {
       await streamAI({ conversation_id: conversationId, message: text }, {
         queue: (data) => setAIState(data.message || '正在排队'),
-        delta: (data) => setMessages((value) => value.map((item) => item.id === tempAssistant.id ? { ...item, content: item.content + data.delta } : item)),
+        status: (data) => setAIState(data.message || '正在处理'),
+        delta: (data) => { setAIState('正在生成'); setMessages((value) => value.map((item) => item.id === tempAssistant.id ? { ...item, content: item.content + data.delta } : item)) },
         error: (data) => { throw new Error(data.message) },
         done: (data) => {
           setConversationId(data.conversation_id); setRemaining(data.remaining)
@@ -503,7 +513,8 @@ export default function StudioPage() {
     try {
       await streamAI({ conversation_id: conversationId, retry_message_id: Number(message.id), force_full: true }, {
         queue: (data) => setAIState(data.message || '正在排队'),
-        delta: (data) => setMessages((value) => value.map((item) => item.id === tempAssistant.id ? { ...item, content: item.content + data.delta } : item)),
+        status: (data) => setAIState(data.message || '正在处理'),
+        delta: (data) => { setAIState('正在生成'); setMessages((value) => value.map((item) => item.id === tempAssistant.id ? { ...item, content: item.content + data.delta } : item)) },
         error: (data) => { throw new Error(data.message) },
         done: (data) => {
           setRemaining(data.remaining)

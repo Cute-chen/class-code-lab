@@ -307,9 +307,6 @@ func (a *App) studentAIRemaining(user User, classID uint) int {
 		return 0
 	}
 	limit := class.AIRequestLimit
-	if limit <= 0 {
-		limit = a.Config.AIRequestsPerStudent
-	}
 	var used int64
 	a.DB.Model(&AIUsageLog{}).Where("user_id = ? AND status = ?", user.ID, "success").Count(&used)
 	remaining := limit + user.AIExtraRequests - int(used)
