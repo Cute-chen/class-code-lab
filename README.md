@@ -1,145 +1,188 @@
-# 代码创作实验室
+# 代码创作实验室 · Class Code Lab
 
-供受控局域网课堂使用的 AI 趣味编程平台。学生可以和 AI 编程助手讨论创意、应用完整 HTML 代码提案、在独立 Runner 中预览，把作品发布到本班广场，并用班级评分积分支持同学作品。教师可以管理班级、名单、AI 额度、作品评分和审计记录。
+<p align="center">
+  <strong>面向受控局域网课堂的 AI 趣味编程平台</strong>
+</p>
 
-项目按局域网自部署设计，默认不面向公网。首次教师账号为 `teacher / 123456`，首次登录后必须改密。代码使用 [MIT 许可证](LICENSE)。
+<p align="center">
+  <a href="https://github.com/Cute-chen/class-code-lab/actions/workflows/ci.yml"><img src="https://github.com/Cute-chen/class-code-lab/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Cute-chen/class-code-lab" alt="License" /></a>
+  <img src="https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26+" />
+  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 20+" />
+  <img src="https://img.shields.io/badge/部署-局域网-2563eb" alt="LAN deployment" />
+</p>
 
-## 技术结构
+<p align="center">
+  <a href="README.md">简体中文</a> · <a href="README.en.md">English</a>
+</p>
 
-- 前端：React、Vite、CodeMirror 6、Phosphor Icons
-- 后端：Go、Gin、GORM
-- 数据库：SQLite（默认便携部署）或 MySQL 8
-- 模型接口：OpenAI Chat Completions 兼容协议，支持 SSE 和普通 JSON 响应
-- 主平台：默认 `8080`
-- Runner：默认 `8081`
+![登录页与品牌展示](docs/assets/login-screen.png)
 
-Runner 与主平台使用不同 Origin。学生代码只在 `sandbox="allow-scripts"` iframe 中运行，并附带 CSP、权限策略、短期运行令牌和服务端静态检查。
-作品封面截取所需的固定版本组件会随前端构建到 `dist/runner-assets`，运行时由 Runner 本地提供，不依赖学生浏览器访问公网 CDN。
+![从登录到学生创作工作台](docs/assets/student-workflow.gif)
 
-## 本地启动
+学生可以和 AI 讨论创意、编辑和运行单文件网页作品，再发布到班级广场；教师负责班级、名单、AI 服务、作品审核和课堂积分。项目默认使用 SQLite，支持 MySQL，并将学生作品放在独立 Runner 中预览。
 
-要求：Go 1.26+、Node.js 20+。使用 MySQL 时还需 MySQL 8+。
+> 项目按受控局域网自部署设计，默认不面向公网。首次教师账号为 `teacher / 123456`，首次登录后必须改密。
 
-默认使用启动目录下的 SQLite 数据库文件 `class-code-lab.db`。如需 MySQL，在 `backend/.env` 中设置 `DATABASE_DSN`；服务首次启动时会自动创建目标数据库。
+## 使用场景
 
-在项目根目录执行以下命令构建前端：
+| 场景 | 适合做什么 |
+| --- | --- |
+| 信息科技课堂 | 学生从创意出发，完成小游戏、互动页面和小应用 |
+| 编程社团 | 让学生在一节课内完成“想法—代码—预览—发布”闭环 |
+| 校园创意活动 | 用班级广场集中展示作品，并通过积分形成排行榜 |
+| 局域网演示 | 教师机代理让受限网络中的学生访问内网主服务和 Runner |
+
+## 功能一览
+
+### 学生端
+
+- AI 创作助手：讨论想法、生成完整 HTML、提出增量修改和修复建议
+- CodeMirror 编辑器：自动保存、历史版本、恢复和清空重建
+- 独立 Runner：运行预览、错误反馈、发布时自动截取首帧封面
+- 班级广场：体验同学作品、评分、查看排行榜和跨班精选
+
+### 教师端
+
+- 班级、学生和 Excel 名单管理
+- 登录、AI、发布和修改权限控制
+- 多组 OpenAI Chat Completions 兼容服务的并发和用量管理
+- 作品预览、审核、撤下、锁定、精选和积分管理
+- 课堂总览、学生状态、AI 对话和审计日志
+
+### 运行边界
+
+- 主平台和 Runner 分端口运行
+- 学生代码使用 `sandbox="allow-scripts"` iframe、CSP、权限策略和短期运行令牌
+- 服务端静态检查会拦截网络请求、表单、外部跳转、弹窗、嵌套网页、Worker、动态字符串执行和明显无限循环
+- 外部脚本和样式只允许带版本号的 jsDelivr 与 cdnjs 地址
+
+浏览器沙箱和静态检查不能对任意 JavaScript 提供数学意义上的安全保证。本项目适合受控局域网；公网部署需要额外隔离、HTTPS、访问控制和安全评估。
+
+## 系统结构
+
+```mermaid
+flowchart LR
+    Student[学生浏览器] --> App[Go 主平台 :8080]
+    Teacher[教师浏览器] --> App
+    App --> DB[(SQLite / MySQL)]
+    App --> AI[OpenAI 兼容模型服务]
+    Student --> Runner[独立 Runner :8081]
+    TeacherPC[教师机代理] --> App
+    TeacherPC --> Runner
+```
+
+![系统结构图](docs/assets/architecture.svg)
+
+技术栈：React、Vite、CodeMirror 6、Phosphor Icons、Go、Gin、GORM、SQLite、MySQL。
+
+## 快速开始
+
+### 环境要求
+
+- Go 1.26+
+- Node.js 20+
+- npm
+- 使用 MySQL 时需要 MySQL 8+
+
+### 本地启动
 
 ```bash
+git clone https://github.com/Cute-chen/class-code-lab.git
+cd class-code-lab
+
 cd frontend
 npm ci
 npm run build
-```
 
-在同一终端切换到后端，配置并启动：
-
-```bash
 cd ../backend
 cp .env.example .env
 go run ./cmd/class-code-lab
 ```
 
-打开 `http://127.0.0.1:8080`；局域网内其他设备使用服务器的局域网 IP 和同一端口访问。Runner 默认使用同一主机的 `8081` 端口，两个端口都需要在防火墙中允许访问。
+打开 `http://127.0.0.1:8080`。局域网内其他设备使用服务器 IP 和 `8080` 访问；Runner 默认使用同一主机的 `8081`，两个端口都需要在防火墙中放行。
 
-服务启动时会自动读取当前目录的 `.env`，从项目根目录启动时也会读取 `backend/.env`。如果系统已经设置同名环境变量，系统环境变量优先。
-
-如果 `8080` 已被其他教学系统使用，可以临时改为：
+如果要换端口，两个端口必须保持相邻：
 
 ```bash
 APP_ADDRESS=:18080 RUNNER_ADDRESS=:18081 go run ./cmd/class-code-lab
 ```
 
-学生浏览器从当前主机的“主平台端口 +1”打开 Runner。改动主平台端口时，必须同时将 Runner 设置为下一个端口，并在防火墙放行这两个端口。
-
 ### 本地前端开发
 
-前端开发服务器默认使用 `5173`，并将 `/api` 转发到 `127.0.0.1:8080`。先启动后端，再在另一个终端运行：
+后端启动后，在另一个终端运行：
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-开发服务器仅代理主平台 API。作品 Runner 仍按页面端口加一访问；要完整验证预览和发布流程，请使用生产构建从后端 `8080` 端口访问。
+Vite 开发服务器默认使用 `5173`，并将 `/api` 转发到 `127.0.0.1:8080`。要验证 Runner 和完整发布流程，请使用生产构建后从后端端口访问。
 
 ### 配置项
 
-将 `backend/.env.example` 复制为 `backend/.env` 后按需修改。环境变量优先于 `.env` 文件。`ADMIN_*` 只在数据库首次初始化、创建教师账号时生效。
+将 `backend/.env.example` 复制为 `backend/.env`。系统环境变量优先于 `.env`。`ADMIN_*` 只在数据库首次初始化、创建教师账号时生效。
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `DATABASE_DSN` | `sqlite://./class-code-lab.db` | SQLite 文件路径；也可填写 MySQL DSN。相对路径以进程启动目录为准。 |
-| `APP_ADDRESS` | `:8080` | 主平台监听地址和端口。 |
-| `RUNNER_ADDRESS` | `:8081` | Runner 监听端口；应为主平台端口加一。 |
-| `FRONTEND_DIST` | 空 | 使用内嵌前端；本地运行可设为 `../frontend/dist`。 |
-| `COOKIE_SECURE` | `false` | 仅使用 HTTPS 时设为 `true`。 |
-| `SESSION_HOURS` | `10` | 登录会话有效期，单位小时。 |
-| `RUN_TOKEN_MINUTES` | `5` | 作品运行链接有效期，单位分钟。 |
-| `ADMIN_NAME` | `任课教师` | 首次创建教师账号时的显示名。 |
-| `ADMIN_LOGIN` | `teacher` | 首次创建教师账号时的登录名。 |
-| `ADMIN_PASSWORD` | `123456` | 首次创建教师账号时的初始密码；首次登录后强制改密。 |
+| `DATABASE_DSN` | `sqlite://./class-code-lab.db` | SQLite 文件路径，也可使用 MySQL DSN |
+| `APP_ADDRESS` | `:8080` | 主平台监听地址和端口 |
+| `RUNNER_ADDRESS` | `:8081` | Runner 监听端口，应为主平台端口加一 |
+| `FRONTEND_DIST` | 空 | 空值使用内嵌前端；开发时可设为 `../frontend/dist` |
+| `COOKIE_SECURE` | `false` | HTTPS 部署时设为 `true` |
+| `SESSION_HOURS` | `10` | 登录会话有效期，单位小时 |
+| `RUN_TOKEN_MINUTES` | `5` | 作品运行链接有效期，单位分钟 |
+| `ADMIN_NAME` | `任课教师` | 首次教师账号显示名 |
+| `ADMIN_LOGIN` | `teacher` | 首次教师账号登录名 |
+| `ADMIN_PASSWORD` | `123456` | 局域网首次部署的初始密码，首次登录强制改密 |
 
-模型服务由教师在后台配置；旧版 `AI_*` 环境变量只在升级已有数据库时导入一次。
+模型服务由教师在后台配置。旧版 `AI_*` 环境变量只在升级已有数据库时导入一次。
 
-## 教师机代理接入机房
+## 演示数据
 
-教师机可运行 `dist/teacher-proxy/teacher-proxy.exe`，让只允许访问教师机的学生机使用内网主服务和 Runner。在项目根目录执行 `./teacher-proxy/build-portable.sh` 可重新生成 Windows 便携包。代理默认监听教师机 `8088`（主服务）和 `8089`（Runner），并转发至 `http://127.0.0.1:18080` 和 `:18081`；请在启动向导中将目标改为实际内网主服务地址。Runner 端口随主端口自动加一。若代理和主服务运行在不同电脑上，不能沿用默认的 `127.0.0.1` 目标。
-
-在教师机放行两个入站端口后，学生访问 `http://<教师机IP>:8088/login`。可先在学生机打开 `http://<教师机IP>:8089/health` 检查 Runner 代理，再登录并点击“运行预览”检查完整链路。学生机不需要访问外网即可使用平台和内置的预览组件；如果学生作品引用公网 CDN 资源，相关资源仍需学生浏览器能访问该 CDN，否则作品中的这部分内容无法加载。AI 请求由主服务发出，主服务本身仍需能访问所配置的模型接口。
-
-首次教师账号：
-
-- 登录名：`teacher`
-- 初始密码：`123456`
-- 首次登录后必须立即改密
-
-## Windows 便携版
-
-在项目根目录执行 `./build-portable.sh`，产物位于 `dist/class-code-lab-portable-windows-x64.zip`。解压后双击 `start.bat` 启动主平台和 Runner；默认端口为 `8080/8081`。教师机代理包由 `./teacher-proxy/build-portable.sh` 生成，产物位于 `dist/teacher-proxy-portable-windows-x64.zip`，默认监听 `8088/8089`。两个脚本均需要 Go；主平台构建还需要 Node.js 和 npm。构建包目前面向 Windows x64。
-
-发布压缩包前应重新运行构建脚本；`dist/` 是本地构建产物，不属于 Git 仓库。
-
-## 模型配置与多服务分流
-
-教师登录后进入“AI 对话与用量 → 服务配置与全局设置”，填写服务名称、OpenAI Chat Completions 兼容接口地址（含 `/v1`）、API Key 和模型，保存后可单独测试连接。可以新增多组服务，设置各自的最大并发、超时、输出上限与思考强度，也可以随时编辑或停用。所有教师共用同一个服务池并可管理配置。API Key 不在读取接口中返回，但会直接保存在数据库中，备份数据库时应按包含密钥的数据保管。
-
-后端选择空闲容量最高的服务；同等负载时轮换。服务满载时学生进入等待队列。请求尚未输出内容就遇到限流、网络、服务端或鉴权错误时，会尝试其他服务。临时故障使该服务冷却 60 秒；鉴权失败后需更新配置或连接测试成功才能恢复。服务进程内统计并发，当前不支持多后端实例共享调度状态。
-
-平台请求 `{接口地址}/chat/completions`，使用 Bearer 鉴权、`stream: true` 和 `stream_options.include_usage: true`，同时兼容普通 JSON 响应。DeepSeek 接口沿用 `max_tokens` 和 `reasoning_effort` 参数。思考强度支持 `none`、`low`、`high`、`max` 和“自动”；自动模式会让新作品使用 `low`，简单样式修改使用 `none`，复杂修复和全量重试使用 `high`。历史对话受全局条数和字符预算限制，历史 AI 回复里的完整 HTML 不会重复发送给模型。
-
-升级已有安装时，数据库第一次初始化会将旧 `AI_*` 环境变量导入一组服务及全局默认设置；之后数据库配置优先且不会被环境变量覆盖。确认导入后可从 `.env` 删除旧 AI 配置。新安装请直接在教师后台填写；未配置服务时仍可手动编辑、预览和发布作品。
-
-## 课堂使用顺序
-
-1. 教师创建班级。
-2. 在学生管理中下载模板并导入 Excel，或添加单个学生。
-3. 上课前开启班级登录，按需开启 AI、发布功能，并设置每名学生的作品评分积分。
-4. 学生选择班级和姓名，用初始密码登录并强制改密。
-5. 学生生成或粘贴代码，保存、预览并发布；发布后浏览器会自动截取运行首帧作为广场封面。
-6. 学生在本班广场体验作品、分配评分积分，并实时查看排行榜和冠亚季军。
-7. 教师在课堂总览查看进度，在作品管理中查看排名、预览、撤下、锁定或加入跨班精选。
-8. 下课后关闭班级登录；如需暂停评分，将班级评分积分设为 `0`，已有榜单会保留。
-
-同班重名时，请在 Excel 中填写不同的“登录名”。界面仍显示真实姓名。
-
-## 导入演示数据
-
-需要快速查看教师总览、学生状态、作品广场和 AI 用量时，可执行：
+使用独立的 SQLite 数据库快速查看教师端和学生端：
 
 ```bash
 cd backend
 go run ./cmd/seed-demo
 ```
 
-命令会同步 `演示班 A`、`演示班 B` 中的模拟账号，不会删除其他正式班级。每个演示学生都有一个对应的演示教师账号，登录名与界面姓名相同。
+命令会重新生成 `演示班 A`、`演示班 B` 和虚构账号，不会删除其他正式班级。所有演示账号初始密码均为 `123456`，首次登录必须改密；重复执行会重建这两个演示班的数据。
 
-- 所有模拟账号初始密码：`123456`
-- 所有模拟账号首次登录后必须修改密码
-- 每个模拟教师都可以管理两个演示班
-- 命令不会创建作品、历史版本、AI 对话、消息、用量或审计记录
+## Windows 便携版与教师机代理
 
-重复执行命令会清理并重新生成这两个演示班的数据。
+主平台便携包：
 
-## 验证命令
+```bash
+./build-portable.sh
+```
+
+输出：`dist/class-code-lab-portable-windows-x64.zip`。解压后双击 `start.bat`，默认监听 `8080/8081`。
+
+教师机代理包：
+
+```bash
+./teacher-proxy/build-portable.sh
+```
+
+输出：`dist/teacher-proxy-portable-windows-x64.zip`，默认监听 `8088/8089`。启动向导中的上游目标必须改为实际主服务地址；如果主服务不在教师机上，不能使用默认的 `127.0.0.1`。
+
+## 数据与隐私
+
+- SQLite 数据库保存学生姓名、登录名、作品代码与历史版本、AI 对话与用量、审计记录以及模型服务 API Key。
+- API Key 不通过读取接口返回，但在数据库中直接保存；数据库和备份文件必须限制访问权限。
+- 学生与 AI 的对话和代码会发送给教师配置的模型服务。使用真实学生数据前，应按所在机构要求告知使用范围。
+- 开放登录的班级会通过无需登录的名单接口返回姓名和登录名，因此不要把服务直接暴露到公网。
+- 代理默认不限制来源 IP；多网段环境可通过 `-allow` 指定允许访问的客户端网段。
+
+## 常见问题
+
+- **页面可以打开但预览失败：**检查 Runner 是否监听“主平台端口 +1”、防火墙是否放行，并访问 `http://<服务器地址>:<Runner端口>/health`。
+- **代理登录正常但预览失败：**检查代理和后端的两个端口，以及代理的上游目标地址。
+- **AI 不可用：**确认教师后台已配置并启用模型服务，使用“测试连接”检查地址、模型名和 API Key。未配置模型时仍可手动创作和发布。
+- **修改端口后预览失败：**同时修改 `APP_ADDRESS` 和 `RUNNER_ADDRESS`，保持 Runner 端口为主平台端口加一。
+
+## 开发与验证
 
 ```bash
 cd backend
@@ -162,36 +205,15 @@ curl http://127.0.0.1:8080/api/health
 curl http://127.0.0.1:8081/health
 ```
 
-## 安全边界
+## 文档与许可证
 
-- 学生班级身份只从服务端会话读取，不接受前端传入的班级条件。
-- 登录使用数据库会话和 HttpOnly Cookie，不使用 localStorage 保存认证令牌。
-- 草稿与公开版本分开保存，继续编辑不会改变已发布快照。
-- 作品封面是发布时生成的静态图片；广场和精选列表不会运行学生代码，截取失败时显示默认图标。
-- 普通作品只允许本班访问；跨班精选只公开已发布快照。
-- 代码检查会阻止网络请求、表单、外部跳转、弹窗、嵌套网页、Worker、动态字符串执行和明显无限循环。
-- 外部资源只允许带明确版本号的 jsDelivr 与 cdnjs URL。
-- 浏览器无法数学意义上证明任意 JavaScript 安全。教师仍应通过锁定和撤下功能处理异常作品。
-
-## 数据与局域网部署说明
-
-- 本项目面向受控局域网。开放登录的班级可通过无需登录的名单接口返回学生姓名和登录名，以供学生在登录页选择；不要将服务直接暴露到公网。
-- SQLite 数据库保存学生姓名、登录名、作品代码与历史版本、AI 对话与用量、审计记录以及模型服务的 API Key。API Key 不通过读取接口返回，但在数据库中直接保存。请限制数据库文件和备份的访问权限，不要提交数据库、`.env` 或课堂导出数据。
-- 学生与 AI 的对话和代码会发送给教师配置的模型服务。使用真实学生数据前，应按所在机构的要求告知使用范围并选择合适的模型服务。
-- 代理默认不限制来源 IP；在有多网段的环境中，可通过 `-allow` 指定允许访问的客户端网段。主平台和 Runner 都需要允许局域网访问。
-- 如果在 HTTPS 下运行，应将 `COOKIE_SECURE` 设为 `true`。当前未提供经过验证的公网部署方案。
-
-## 常见问题
-
-- **页面可以打开但预览失败：**检查 Runner 是否监听“主平台端口 +1”、防火墙是否放行该端口，并访问 `http://<服务器地址>:<Runner端口>/health`。
-- **代理可以打开登录页但预览失败：**同时检查代理的两个监听端口和后端的两个目标端口。代理目标地址不能误填为教师机自身的 `127.0.0.1`，除非主服务也运行在该教师机上。
-- **AI 不可用：**确认教师后台已配置并启用模型服务，使用“测试连接”检查服务地址、模型名和 API Key。未配置模型时仍可手动创作和发布。
-- **修改端口后预览失败：**同时修改 `APP_ADDRESS` 和 `RUNNER_ADDRESS`，保持 Runner 端口为主平台端口加一。
-
-## 许可证
-
-项目代码和文档采用 [MIT License](LICENSE)。前端和后端依赖各自使用其原有许可证；随便携包分发的 `html2canvas` 许可文本见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- [开发与验收记录](docs/开发与验收记录.md)
+- [教师端与学生端设计](docs/教师端与学生端设计.md)
+- [系统实施计划](docs/系统实施计划.md)
+- [开源清理与发布计划](docs/开源清理与发布计划.md)
+- [第三方许可证声明](THIRD_PARTY_NOTICES.md)
+- [MIT License](LICENSE)
 
 ## 当前范围
 
-已完成代码和基础工程验证。本项目暂未包含校园服务器部署、域名、HTTPS、真实模型付费测试和 60 人真实并发压测。正式课堂使用前请用两个测试班进行一次局域网演练。
+项目已完成基础工程验证，但还没有包含校园服务器部署、域名、HTTPS、真实模型付费测试和 60 人真实并发压测。正式课堂使用前，请用两个测试班进行一次局域网演练。

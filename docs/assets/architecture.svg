@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Class Code Lab architecture</title>
+  <desc id="desc">Students and teachers connect to the Go application, which uses a database and an OpenAI-compatible provider. Students also connect to a separate Runner.</desc>
+  <defs><linearGradient id="blue" x1="0" x2="1"><stop stop-color="#3159c7"/><stop offset="1" stop-color="#24a7c7"/></linearGradient><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="8" flood-opacity=".16"/></filter></defs>
+  <rect width="1200" height="420" rx="24" fill="#f7f9fc"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" text-anchor="middle">
+    <text x="600" y="42" font-size="24" font-weight="700" fill="#182235">Class Code Lab</text>
+    <g filter="url(#shadow)">
+      <rect x="55" y="105" width="210" height="90" rx="18" fill="#fff"/><text x="160" y="143" font-size="18" font-weight="700" fill="#182235">Student browser</text><text x="160" y="171" font-size="14" fill="#64748b">classroom clients</text>
+      <rect x="55" y="250" width="210" height="90" rx="18" fill="#fff"/><text x="160" y="288" font-size="18" font-weight="700" fill="#182235">Teacher browser</text><text x="160" y="316" font-size="14" fill="#64748b">dashboard and review</text>
+      <rect x="420" y="145" width="260" height="120" rx="22" fill="url(#blue)"/><text x="550" y="192" font-size="22" font-weight="700" fill="#fff">Go application</text><text x="550" y="222" font-size="15" fill="#e9f2ff">main platform :8080</text>
+      <rect x="850" y="75" width="245" height="90" rx="18" fill="#fff"/><text x="972" y="113" font-size="18" font-weight="700" fill="#182235">Runner</text><text x="972" y="141" font-size="14" fill="#64748b">isolated preview :8081</text>
+      <rect x="850" y="220" width="245" height="90" rx="18" fill="#fff"/><text x="972" y="258" font-size="18" font-weight="700" fill="#182235">SQLite / MySQL</text><text x="972" y="286" font-size="14" fill="#64748b">class and work data</text>
+      <rect x="420" y="320" width="260" height="60" rx="16" fill="#e9f2ff"/><text x="550" y="357" font-size="16" font-weight="700" fill="#3159c7">OpenAI-compatible provider</text>
+    </g>
+    <g stroke="#7890bb" stroke-width="3" fill="none" marker-end="url(#arrow)"><path d="M265 150H410"/><path d="M265 295H410"/><path d="M680 175h160"/><path d="M680 240h160"/><path d="M550 265v50"/></g>
+    <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#7890bb"/></marker></defs>
+  </g>
+</svg>
