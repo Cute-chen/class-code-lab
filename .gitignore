@@ -16,6 +16,9 @@ dist/
 backend/cmd/class-code-lab/frontend-dist/*
 !backend/cmd/class-code-lab/frontend-dist/.gitkeep
 
+# Local Go build output from `go build ./...` in teacher-proxy
+teacher-proxy/teacher-proxy
+
 # IDE / editor
 .vscode/
 .trae/

@@ -55,6 +55,18 @@ const ideaExamples = [
   },
 ]
 
+const DEFAULT_AI_PANEL_WIDTH = 32
+const AI_PANEL_WIDTH_STORAGE_KEY = 'class-code-lab:studio-ai-panel-width'
+
+function getSavedAIPanelWidth() {
+  try {
+    const saved = Number(window.localStorage.getItem(AI_PANEL_WIDTH_STORAGE_KEY))
+    return Number.isFinite(saved) && saved >= 20 && saved <= 70 ? saved : DEFAULT_AI_PANEL_WIDTH
+  } catch {
+    return DEFAULT_AI_PANEL_WIDTH
+  }
+}
+
 function renderInlineMarkdown(text, keyPrefix) {
   const tokens = text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_)/g)
   return tokens.map((token, index) => {
@@ -225,6 +237,8 @@ export default function StudioPage() {
   const [runtimeError, setRuntimeError] = useState('')
   const [previewFullscreenOpen, setPreviewFullscreenOpen] = useState(false)
   const [previewZoom, setPreviewZoom] = useState(1)
+  const [aiPanelWidth, setAIPanelWidth] = useState(getSavedAIPanelWidth)
+  const [resizingPanels, setResizingPanels] = useState(false)
   const [messages, setMessages] = useState([])
   const [conversations, setConversations] = useState([])
   const [proposals, setProposals] = useState([])
@@ -245,11 +259,65 @@ export default function StudioPage() {
   const abortRef = useRef(null)
   const chatListRef = useRef(null)
   const fullscreenPreviewRef = useRef(null)
+  const studioRef = useRef(null)
   const followStreamRef = useRef(true)
   const skipNextAutosaveRef = useRef(false)
   const loadedRef = useRef(false)
   const thumbnailCaptureRef = useRef(null)
   const thumbnailCaptureTimerRef = useRef(null)
+
+  const clampAIPanelWidth = useCallback((width) => {
+    const containerWidth = studioRef.current?.getBoundingClientRect().width || window.innerWidth
+    const minWidth = 320 / containerWidth * 100
+    const maxWidth = (containerWidth - 488) / containerWidth * 100
+    return Math.min(maxWidth, Math.max(minWidth, width))
+  }, [])
+
+  useEffect(() => {
+    if (loading || !studioRef.current) return undefined
+    const observer = new ResizeObserver(() => {
+      if (studioRef.current?.getBoundingClientRect().width <= 1100) return
+      setAIPanelWidth((current) => Math.round(clampAIPanelWidth(current) * 10) / 10)
+    })
+    observer.observe(studioRef.current)
+    return () => observer.disconnect()
+  }, [loading, clampAIPanelWidth])
+
+  function updateAIPanelWidth(width) {
+    const nextWidth = Math.round(clampAIPanelWidth(width) * 10) / 10
+    setAIPanelWidth(nextWidth)
+    try { window.localStorage.setItem(AI_PANEL_WIDTH_STORAGE_KEY, String(nextWidth)) } catch { /* Storage may be unavailable. */ }
+  }
+
+  function resizePanels(event) {
+    const rect = studioRef.current?.getBoundingClientRect()
+    if (!rect) return
+    updateAIPanelWidth((event.clientX - rect.left) / rect.width * 100)
+  }
+
+  function startPanelResize(event) {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setResizingPanels(true)
+    resizePanels(event)
+  }
+
+  function stopPanelResize(event) {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+    event.currentTarget.releasePointerCapture(event.pointerId)
+    setResizingPanels(false)
+  }
+
+  function handlePanelResizeKeyDown(event) {
+    const step = event.shiftKey ? 10 : 2
+    if (event.key === 'ArrowLeft') updateAIPanelWidth(aiPanelWidth - step)
+    else if (event.key === 'ArrowRight') updateAIPanelWidth(aiPanelWidth + step)
+    else if (event.key === 'Home') updateAIPanelWidth(0)
+    else if (event.key === 'End') updateAIPanelWidth(100)
+    else return
+    event.preventDefault()
+  }
 
   useEffect(() => {
     const cancelAIRequest = () => abortRef.current?.abort()
@@ -554,7 +622,7 @@ export default function StudioPage() {
   if (loading) return <main className="studio-loading"><Skeleton rows={7} /></main>
   if (!work) return <main className="page-container"><EmptyState title="作品加载失败" description="请刷新页面再试。" /></main>
 
-  return <main className="studio-page">
+  return <main ref={studioRef} className={`studio-page${resizingPanels ? ' is-resizing' : ''}`} style={{ '--ai-panel-width': `${aiPanelWidth}%` }}>
     {notice ? <div className="toast-wrap"><Notice type={notice.type} title={notice.title} onClose={() => setNotice(null)}>{notice.body}</Notice></div> : null}
     <section className="ai-panel">
       <header><div className="ai-header-main"><div className="ai-title"><Robot size={23} weight="duotone" /><div><strong>AI 编程助手</strong><small>{aiConfigured ? `本节剩余 ${remaining} 次` : '当前未配置模型'}</small></div></div><Badge tone={aiConfigured && aiState === 'idle' ? 'success' : 'warning'}>{!aiConfigured ? '手动模式' : aiState === 'idle' ? '可以提问' : aiState === 'writing' ? '正在编写' : aiState}</Badge></div><div className="ai-header-actions"><button className="conversation-action-button" onClick={openConversationHistory} disabled={aiState !== 'idle'}><ArrowCounterClockwise size={16} weight="bold" />历史对话</button><button className="conversation-action-button" onClick={startNewConversation} disabled={aiState !== 'idle' || clearingCode || saveState === 'saving'}><Plus size={16} weight="bold" />{clearingCode ? '正在清空' : '新建对话'}</button></div></header>
@@ -569,6 +637,24 @@ export default function StudioPage() {
       </div>
       <div className="chat-compose"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendPrompt() } }} placeholder="描述想法，或请 AI 修改当前作品..." disabled={!aiConfigured || aiState !== 'idle'} /><button onClick={() => aiState === 'idle' ? sendPrompt() : abortRef.current?.abort()} disabled={!aiConfigured || (aiState === 'idle' && !prompt.trim())} aria-label={aiState === 'idle' ? '发送' : '停止'}>{aiState === 'idle' ? <PaperPlaneTilt size={21} weight="fill" /> : <Stop size={21} weight="fill" />}</button></div>
     </section>
+    <div
+      className="studio-resizer"
+      role="separator"
+      aria-label="调整 AI 助手与代码预览的宽度"
+      aria-orientation="vertical"
+      aria-valuenow={Math.round(aiPanelWidth)}
+      aria-valuemin={Math.round(clampAIPanelWidth(0))}
+      aria-valuemax={Math.round(clampAIPanelWidth(100))}
+      tabIndex={0}
+      title="拖动调整左右宽度，双击恢复默认"
+      onPointerDown={startPanelResize}
+      onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resizePanels(event) }}
+      onPointerUp={stopPanelResize}
+      onPointerCancel={stopPanelResize}
+      onLostPointerCapture={() => setResizingPanels(false)}
+      onDoubleClick={() => updateAIPanelWidth(DEFAULT_AI_PANEL_WIDTH)}
+      onKeyDown={handlePanelResizeKeyDown}
+    />
     <section
       ref={fullscreenPreviewRef}
       className={`work-panel${previewFullscreenOpen ? ' work-panel-preview-fullscreen' : ''}`}

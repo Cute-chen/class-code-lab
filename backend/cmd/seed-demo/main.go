@@ -63,7 +63,7 @@ func seed(db *gorm.DB, cfg app.Config) error {
 			if _, err := createAccount(db, class.ID, app.RoleStudent, studentName, string(passwordHash)); err != nil {
 				return err
 			}
-			teacherName := strings.TrimSuffix(studentName, "-学生") + "-老师"
+			teacherName := strings.Replace(studentName, "学生", "教师", 1)
 			teacher, err := createAccount(db, class.ID, app.RoleTeacher, teacherName, string(passwordHash))
 			if err != nil {
 				return err

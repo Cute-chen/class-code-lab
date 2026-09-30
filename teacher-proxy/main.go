@@ -3,10 +3,10 @@
 // 专用于代理 class-code-lab 这类"主服务 + runner"双端口服务。
 // 主服务监听 :PORT, 转发到内网主服务 (如 127.0.0.1:18080);
 // runner 监听 :PORT+1, 转发到内网 runner (如 127.0.0.1:18081)。
-// 这样前端硬编码的 `window.location.hostname:8081` 就能命中教师机的 runner 代理。
+// 前端使用当前页面的主机名及主端口 +1 访问 runner。
 //
-//	学生访问 http://<教师机IP>:8080/login       -> 内网主服务
-//	学生访问 http://<教师机IP>:8081/run/<token> -> 内网 runner
+//	学生访问 http://<教师机IP>:8088/login       -> 内网主服务
+//	学生访问 http://<教师机IP>:8089/run/<token> -> 内网 runner
 //
 // 双击 exe (不传任何参数) 会进入交互式引导;
 // 也可直接用命令行参数:
@@ -33,11 +33,10 @@ import (
 )
 
 var (
-	listenAddr   = flag.String("listen", ":8088", "本机主服务监听地址")
-	runnerListen = flag.String("runner-listen", ":8081", "本机 runner 监听地址 (前端硬编码使用 8081, 一般不改)")
-	targetURL    = flag.String("target", "http://127.0.0.1:18080", "内网主服务地址 (runner 转发端口自动 +1)")
-	allowCIDR    = flag.String("allow", "", "可选,允许访问的客户端 CIDR,如 192.0.2.0/24;留空表示允许所有")
-	skipVerify   = flag.Bool("insecure", false, "后端为 HTTPS 且证书无效时使用(谨慎,仅限内网自签名)")
+	listenAddr = flag.String("listen", ":8088", "本机主服务监听地址 (runner 自动使用下一端口)")
+	targetURL  = flag.String("target", "http://127.0.0.1:18080", "内网主服务地址 (runner 转发端口自动 +1)")
+	allowCIDR  = flag.String("allow", "", "可选,允许访问的客户端 CIDR,如 192.0.2.0/24;留空表示允许所有")
+	skipVerify = flag.Bool("insecure", false, "后端为 HTTPS 且证书无效时使用(谨慎,仅限内网自签名)")
 )
 
 func main() {
@@ -61,7 +60,10 @@ func main() {
 	// 推导 runner 转发目标 (主 target 端口 + 1)
 	runnerTarget := bumpPort(mainTarget, +1)
 	listenMain := normalizeListen(*listenAddr)
-	listenRunner := normalizeListen(*runnerListen)
+	listenRunner, err := nextListenAddr(listenMain)
+	if err != nil {
+		log.Fatalf("本机主服务监听地址无效 %q: %v", listenMain, err)
+	}
 
 	// 访问控制中间件 (两个端口共用)
 	var allowNet *net.IPNet
@@ -219,6 +221,19 @@ func normalizeListen(s string) string {
 	return s
 }
 
+// nextListenAddr 保持监听网卡不变，并使用主服务端口的下一端口。
+func nextListenAddr(addr string) (string, error) {
+	host, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", err
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port >= 65535 {
+		return "", fmt.Errorf("端口须在 1 到 65534 之间")
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port+1)), nil
+}
+
 // bumpPort 把 URL 的端口加 n
 func bumpPort(u *url.URL, n int) *url.URL {
 	out := *u
@@ -279,9 +294,9 @@ func runInteractive() {
 
 	// 下一层 - 监听端口
 	fmt.Println("[下一层] 本机主服务监听端口")
-	fmt.Println("  runner 端口固定 8081 (前端硬编码使用, 如需改用命令行 -runner-listen)")
+	fmt.Println("  runner 自动使用主服务端口 +1")
 	fmt.Println("  学生访问主服务: http://<教师机IP>:<本端口>")
-	fmt.Println("  学生访问 runner: http://<教师机IP>:8081")
+	fmt.Println("  学生访问 runner: http://<教师机IP>:<本端口+1>")
 	fmt.Printf("  直接回车使用默认 [%s]: ", strings.TrimPrefix(displayPort(*listenAddr), ":"))
 	if s := readLine(reader); s != "" {
 		if !strings.HasPrefix(s, ":") {
@@ -309,7 +324,11 @@ func runInteractive() {
 	}
 	runnerTarget := bumpPort(mainTarget, +1)
 	listenMain := normalizeListen(*listenAddr)
-	listenRunner := normalizeListen(*runnerListen)
+	listenRunner, err := nextListenAddr(listenMain)
+	if err != nil {
+		fmt.Printf("!! 本机主服务监听地址无效: %v\n", err)
+		os.Exit(1)
+	}
 
 	// 确认
 	fmt.Println("------------------------------------------")

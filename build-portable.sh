@@ -51,6 +51,8 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
     ./cmd/class-code-lab
 
 echo "==> [5/6] Writing launcher and docs"
+cp "$ROOT/LICENSE" "$PKG_DIR/LICENSE"
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$PKG_DIR/THIRD_PARTY_NOTICES.md"
 cat > "$PKG_DIR/start.bat" <<'BAT'
 @echo off
 chcp 65001 >nul
