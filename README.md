@@ -18,7 +18,11 @@
 
 ![登录页与品牌展示](docs/assets/login-screen.png)
 
-![从登录到学生创作工作台](docs/assets/student-workflow.gif)
+![学生使用 AI 生成代码并运行预览](docs/assets/ai-workflow.gif)
+
+上面的演示使用虚构账号和本地隔离数据库，完整展示了：描述想法 → AI 返回代码提案 → 应用到编辑器 → 查看代码 → 运行星光按钮小游戏。
+
+![星光按钮运行预览](docs/assets/ai-running.png)
 
 学生可以和 AI 讨论创意、编辑和运行单文件网页作品，再发布到班级广场；教师负责班级、名单、AI 服务、作品审核和课堂积分。项目默认使用 SQLite，支持 MySQL，并将学生作品放在独立 Runner 中预览。
 

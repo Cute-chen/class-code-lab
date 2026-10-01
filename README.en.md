@@ -15,7 +15,11 @@
 
 ![Login screen](docs/assets/login-screen.png)
 
-![Student workflow](docs/assets/student-workflow.gif)
+![Student AI coding and preview workflow](docs/assets/ai-workflow.gif)
+
+The demo uses fictional accounts and an isolated local database. It shows the full loop: describe an idea, receive an AI code proposal, apply it to the editor, inspect the code, and run the star-button game.
+
+![Star-button game running in the Runner](docs/assets/ai-running.png)
 
 Class Code Lab helps students turn ideas into small HTML/CSS/JavaScript games and interactive pages. Students can discuss ideas with an AI assistant, edit and preview code in an isolated Runner, publish work to a class gallery, and review classmates' work. Teachers manage classes, rosters, AI providers, publishing permissions, scores, and audit logs.
 
