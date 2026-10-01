@@ -16,13 +16,13 @@
   <a href="README.md">简体中文</a> · <a href="README.en.md">English</a>
 </p>
 
-![登录页与品牌展示](docs/assets/login-screen.png)
+![登录页与品牌展示](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/login-screen.png)
 
-![学生使用 AI 生成代码并运行预览](docs/assets/ai-workflow.gif)
+![学生使用 AI 生成代码并运行预览](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/ai-workflow.gif)
 
 上面的演示使用虚构账号和本地隔离数据库，完整展示了：描述想法 → AI 返回代码提案 → 应用到编辑器 → 查看代码 → 运行星光按钮小游戏。
 
-![星光按钮运行预览](docs/assets/ai-running.png)
+![星光按钮运行预览](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/ai-running.png)
 
 学生可以和 AI 讨论创意、编辑和运行单文件网页作品，再发布到班级广场；教师负责班级、名单、AI 服务、作品审核和课堂积分。项目默认使用 SQLite，支持 MySQL，并将学生作品放在独立 Runner 中预览。
 
@@ -76,7 +76,7 @@ flowchart LR
     TeacherPC --> Runner
 ```
 
-![系统结构图](docs/assets/architecture.svg)
+![系统结构图](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/architecture.svg)
 
 技术栈：React、Vite、CodeMirror 6、Phosphor Icons、Go、Gin、GORM、SQLite、MySQL。
 
@@ -208,6 +208,10 @@ npm run build
 curl http://127.0.0.1:8080/api/health
 curl http://127.0.0.1:8081/health
 ```
+
+## 关键词
+
+AI 编程课堂、局域网教学、趣味编程、学生作品广场、教师课堂管理、HTML/CSS/JavaScript、SQLite、MySQL、OpenAI 兼容 API、校园编程社团。
 
 ## 文档与许可证
 
