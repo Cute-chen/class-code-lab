@@ -18,7 +18,7 @@
 
 ![登录页与品牌展示](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/login-screen.png)
 
-![学生使用 AI 生成代码并运行预览](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/ai-workflow.gif)
+![学生使用 AI 生成代码并运行预览](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/ai-workflow-v2.gif)
 
 上面的演示使用虚构账号和本地隔离数据库，完整展示了：描述想法 → AI 返回代码提案 → 应用到编辑器 → 查看代码 → 运行星光按钮小游戏。
 

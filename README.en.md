@@ -15,7 +15,7 @@
 
 ![Login screen](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/login-screen.png)
 
-![Student AI coding and preview workflow](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/ai-workflow.gif)
+![Student AI coding and preview workflow](https://raw.githubusercontent.com/Cute-chen/class-code-lab/main/docs/assets/ai-workflow-v2.gif)
 
 The demo uses fictional accounts and an isolated local database. It shows the full loop: describe an idea, receive an AI code proposal, apply it to the editor, inspect the code, and run the star-button game.
 
